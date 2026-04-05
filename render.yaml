@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: finance-backend
+    runtime: java
+    rootDir: backend
+    buildCommand: ./mvnw -DskipTests package
+    startCommand: java -jar target/backend-0.0.1-SNAPSHOT.jar
+    envVars:
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: SPRING_DATASOURCE_DRIVER
+        value: org.postgresql.Driver
+      - key: SPRING_JPA_DATABASE_PLATFORM
+        value: org.hibernate.dialect.PostgreSQLDialect
+      - key: SPRING_JPA_HBM2DDL
+        value: update
+      - key: SPRING_JWT_SECRET
+        sync: false
+      - key: SPRING_JWT_EXPIRATION_MS
+        value: "14400000"
+      - key: FRONTEND_ORIGIN
+        sync: false
