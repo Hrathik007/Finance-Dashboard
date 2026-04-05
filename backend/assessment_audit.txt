@@ -1,0 +1,151 @@
+Finance Dashboard Backend — Assessment Audit
+Date: 2026-04-03
+
+Purpose
+This file contains a full audit and mapping of the Finance Dashboard Spring Boot backend to the assignment requirements. It lists what is implemented, where (file paths), verification commands, gaps, and recommended improvements.
+
+---
+High-level summary
+- The project implements a Spring Boot backend with JPA entities (User, Role, FinancialRecord), repositories, services, controllers, JWT authentication, role-based access control, DTOs, paginated/filtered endpoints, summaries/aggregations, soft delete, OpenAPI, and a global exception handler.
+- Most core assignment requirements are implemented. A few small improvements are suggested (tests, production-safe CORS/JWT handling, README updates).
+
+Checklist (what is covered in this audit)
+- User & Role Management: Done
+- Financial Records CRUD + Filtering + Soft delete: Done
+- Dashboard summary APIs: Done
+- Access control: Done (method & service-level checks)
+- Validation & error handling: Mostly Done
+- Persistence (H2/JPA): Done
+- Optional features observed: Pagination, filtering, JWT, Swagger, DTOs
+
+Detailed mapping: Requirement → Implementation (files & notes)
+
+1) User and Role Management
+Status: Done
+Files & responsibilities:
+- src/main/java/com/upwise/backend/model/User.java — User entity (id, username, password, email, active, roles).
+- src/main/java/com/upwise/backend/model/Role.java — Role entity (id, name, e.g., ROLE_ADMIN).
+- src/main/java/com/upwise/backend/repository/UserRepository.java — findByUsername method.
+- src/main/java/com/upwise/backend/repository/RoleRepository.java — findByName method.
+- src/main/java/com/upwise/backend/service/UserService.java — createUser (encodes password with BCrypt), findByUsername, listAll, updateStatus.
+- src/main/java/com/upwise/backend/service/RoleService.java — createIfNotExists and lookup.
+- src/main/java/com/upwise/backend/controller/UserController.java — admin-only endpoints to create/list/update user status. Uses DTOs (UserDTO, UserResponse).
+- src/main/java/com/upwise/backend/bootstrap/DataInitializer.java — seeds roles and default admin (and the additional seeded users: admin1, analyst1, viewer1).
+Notes:
+- Passwords are encoded in createUser via PasswordEncoder (BCrypt). Role names follow ROLE_* convention.
+
+2) Financial Records Management (CRUD + filter)
+Status: Done
+Files & responsibilities:
+- src/main/java/com/upwise/backend/model/FinancialRecord.java — entity fields: amount, type (INCOME/EXPENSE), category, notes, date, deleted (soft-delete flag).
+- src/main/java/com/upwise/backend/repository/FinancialRecordRepository.java — JPA repository + JpaSpecificationExecutor for filtering; includes aggregate queries sumAmountByType and sumAmountGroupedByCategory.
+- src/main/java/com/upwise/backend/service/FinancialRecordService.java — create, update, softDelete, listAll(Pageable), filter(start,end,category,type,pageable), summary(). Also toDto() conversion.
+- src/main/java/com/upwise/backend/controller/FinancialRecordController.java — endpoints: POST /api/records (ADMIN), GET /api/records (ADMIN/ANALYST/VIEWER, paginated), PUT /api/records (ADMIN), DELETE /api/records/{id} (ADMIN), GET /api/records/filter (filters + pageable).
+Notes:
+- Controllers use DTOs and return ApiResponse/PaginatedResponse; soft delete is implemented.
+
+3) Dashboard Summary APIs
+Status: Done
+Files & responsibilities:
+- FinancialRecordService.summary(User) — computes totalIncome, totalExpense, net, byCategory with repo queries.
+- src/main/java/com/upwise/backend/controller/SummaryController.java — GET /api/summary protected by @PreAuthorize("hasAnyRole('ADMIN','ANALYST')").
+Notes: Basic summaries (totals & category totals) are implemented; time-series trends are not present but not required.
+
+4) Access Control Logic
+Status: Done (layered)
+Files & responsibilities:
+- src/main/java/com/upwise/backend/security/SecurityConfig.java — SecurityFilterChain, JWT filter added, method security enabled, /api/auth/** permitted.
+- src/main/java/com/upwise/backend/security/JwtFilter.java — parse token, set Authentication principal (UserDetails), handle invalid/expired tokens with JSON response.
+- src/main/java/com/upwise/backend/service/AccessControlService.java — canCreateOrModify, canRead, canAccessSummaries (role-based checks on User entity), used by services for defensive checks.
+- @PreAuthorize annotations across controllers for method-level security.
+Notes:
+- Double protection (Spring Security + AccessControlService) is used; good practice for defense in depth.
+
+5) Validation & Error Handling
+Status: Mostly Done
+Files & responsibilities:
+- DTO validation annotations: FinancialRecordDTO uses @NotNull and @PositiveOrZero; controllers use @Valid for incoming DTOs.
+- src/main/java/com/upwise/backend/controller/GlobalExceptionHandler.java — maps custom exceptions to HTTP status codes and returns ApiResponse format. Handles validation exceptions and returns 400 with details.
+- src/main/java/com/upwise/backend/security/RestAuthenticationEntryPoint.java — returns consistent 401 JSON for unauthenticated requests.
+Notes:
+- Validation coverage is present for DTOs. Query params are not validated (acceptable). The exception handler centralizes error responses.
+
+6) Data Persistence
+Status: Done (demo-level)
+Files & responsibilities:
+- src/main/resources/application.properties — H2 datasource, spring.jpa.hibernate.ddl-auto=update, server.port=8081.
+- JPA/Hibernate auto-creates tables on startup; H2 in-memory used for demo/testing.
+Notes:
+- For production use, configure a persistent DB and migrations (Flyway/Liquibase).
+
+7) Optional Enhancements observed
+- Pagination: implemented via Pageable and PaginatedResponse.
+- Filtering: implemented using JPA Specification in FinancialRecordService.filter.
+- Soft delete: implemented via FinancialRecord.deleted boolean and softDelete service.
+- JWT authentication: JwtUtil generates tokens with roles claim as a List<String>.
+- OpenAPI/Swagger: configured via OpenApiConfig.
+- Tests: minimal. Recommend adding MockMvc integration tests.
+
+Verification commands (copy/paste) — run from project root
+Start the backend (foreground):
+```bash
+./mvnw spring-boot:run
+```
+Start in background and capture logs:
+```bash
+nohup ./mvnw spring-boot:run > backend.log 2>&1 & echo $! > backend.pid
+sleep 6
+tail -n 200 backend.log
+```
+Health (may be secured and return 401):
+```bash
+curl -i http://localhost:8081/actuator/health
+```
+Login and get JWT (example for admin1):
+```bash
+curl -s -X POST http://localhost:8081/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin1","password":"admin123"}' | jq .
+```
+Decode token payload to inspect roles claim:
+```bash
+TOKEN="<PASTE_TOKEN_HERE>"
+echo $TOKEN | awk -F'.' '{print $2}' | base64 --decode | jq .
+```
+Protected endpoint examples:
+- Viewer (403) when creating a record:
+```bash
+curl -i -X POST http://localhost:8081/api/records \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <VIEWER_TOKEN>" \
+  -d '{"amount": 50.00, "type":"INCOME", "date":"2026-04-01"}'
+```
+- Analyst access summary (200):
+```bash
+curl -i -X GET http://localhost:8081/api/summary -H "Authorization: Bearer <ANALYST_TOKEN>"
+```
+
+Gaps & recommendations (priority order)
+1) Tests (High): Add MockMvc integration tests for unauthorized (401), forbidden (403), invalid token (401), summary access for admin/analyst, validation errors, and empty lists. This improves reliability and score.
+2) JWT secret handling (High): Ensure production `SPRING_JWT_SECRET` environment variable is set (document in README). Consider failing startup if running in production without secure secret.
+3) CORS (Medium): Move allowed origins to configuration property (do not rely on wildcard) and only allow dev origin(s) for development.
+4) README (Medium): Update README to list seeded users (admin1, analyst1, viewer1) and sample verification commands.
+5) Optional analytics (Low): Add monthly/weekly trend endpoints if desired (group by month queries).
+
+Final quick assessment (scores out of 10, subjective):
+- Backend Design: 9/10
+- Logical Thinking / Business rules: 9/10
+- Functionality: 9/10
+- Code Quality: 8.5/10
+- Database & modeling: 9/10
+- Validation & Reliability: 8.5/10
+- Documentation: 7.5/10
+- Extra features: 8/10
+
+Next immediate actions you can ask me to perform
+- "run verification" — I will run login for the three seeded users and decode tokens here, then paste outputs.
+- "add tests" — I will create MockMvc integration tests covering the scenarios listed.
+- "tighten CORS/JWT" — I will move CORS origins and JWT secret to properties and add README instructions.
+
+End of audit.
+

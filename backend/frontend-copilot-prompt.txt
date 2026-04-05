@@ -1,0 +1,171 @@
+Create a production-quality React + Vite + TypeScript frontend for the Finance Dashboard backend running at http://localhost:8081.
+Use Material UI (MUI) for UI components, React Router v6+, Axios for HTTP, React Hook Form + Zod for form validation and client-side schemas.
+
+Important: This prompt must match the backend API surface exactly as implemented in the repository. Do not invent endpoints. If an endpoint is optional in the backend, mark it optional in the frontend.
+
+Overview / Goals
+- Provide a secure, role-aware SPA that uses JWT auth from the backend and renders dashboards, records listing, user management (admin), budget management, and audit viewing (admin).
+- Keep code modular and production-ready (env driven, typed DTOs, centralized API layer, error handling, route guards). Provide instructions to run locally.
+
+Backend contract (canonical)
+- Base URL: http://localhost:8081 (use env variable VITE_API_BASE_URL)
+- API response envelope (all endpoints):
+  {
+    "status": "success" | "error",
+    "message": string | null,
+    "data": any | null
+  }
+
+Authentication
+- Login: POST /api/auth/login
+  Request: { "username": "<string>", "password": "<string>" }
+  Response: ApiResponse.success with data.token containing the JWT
+- Store JWT in localStorage key: "token"
+- Axios must attach Authorization: Bearer <token> to all /api/** requests via an axios instance.
+- On 401: clear token, redirect to /login
+- Roles: JWT payload includes `roles` claim (array of strings e.g. ["ROLE_ADMIN"]). Decode client-side (base64) to obtain roles and expiration.
+
+Security/Route access
+- Role helpers: `hasRole(role)`, `hasAnyRole([roles])` which check decoded token claims and token validity.
+- ProtectedRoute component: checks token presence and optionally role membership; redirects to /login if unauthorized.
+- Role mapping to UI:
+  - ADMIN: full access (users, records, budget, audit, analytics)
+  - ANALYST: read records, summary, budget status, analytics
+  - VIEWER: only dashboard summary
+
+APIs you must implement client calls for (exact)
+- POST /api/auth/login
+- GET /api/summary  (ADMIN, ANALYST)
+- Financial records:
+  - GET /api/records?page=0&size=10 (ADMIN, ANALYST, VIEWER)
+  - GET /api/records/filter?start=YYYY-MM-DD&end=YYYY-MM-DD&category=...&type=INCOME|EXPENSE&page=0&size=10
+  - POST /api/records (ADMIN)
+  - PUT /api/records (ADMIN)
+  - DELETE /api/records/{id} (ADMIN)
+- Users (ADMIN only):
+  - POST /api/users
+  - GET /api/users
+  - PUT /api/users/{id}/status?active=true|false
+- Budget:
+  - POST /api/budget  (ADMIN)
+  - GET /api/budget/status?userId=<id>  (ADMIN, ANALYST)
+- Audit (ADMIN):
+  - GET /api/audit
+
+Note: The backend includes an analytics service internally and an overall summary endpoint at /api/summary. Other analytics endpoints in the service are not exposed as public controllers in the current backend, so do not call non-existent analytics endpoints.
+
+Front-end required screens and routes
+- /login
+  - Login form (username/password). On success save token and redirect to /dashboard.
+- /dashboard  (protected)
+  - For ADMIN/ANALYST show summary widgets (total income, total expense, net, savings rate if available).
+  - For VIEWER show summary only (restricted widgets hidden).
+  - Recent transactions list (use GET /api/records with size=5 or call filter), show chart placeholders (frontend can fetch recent transactions via GET /api/records with page params).
+- /records  (protected)
+  - Paginated table with page controls, columns: date, amount, type, category, notes
+  - Filtering UI (date range, category, type) using /api/records/filter
+  - ADMIN actions: create/edit modal (React Hook Form + Zod), delete confirmation (soft delete). Use POST/PUT/DELETE endpoints.
+- /users  (ADMIN only)
+  - List users, create user form (username, password, email, roles (multi-select), active toggle)
+  - Update active status (call PUT /api/users/{id}/status)
+- /budget  (ADMIN/ANALYST)
+  - Create category budget (POST /api/budget)
+  - View budget status GET /api/budget/status?userId=<id> — show used / remaining / status (SAFE/NEAR_LIMIT/EXCEEDED)
+- /audit  (ADMIN)
+  - View recent audit logs: entries contain id, username, action, timestamp — call GET /api/audit
+
+Folder structure (must follow)
+- src/
+  - api/
+    - client.ts         (axios instance with interceptor to attach token and unwrap ApiResponse)
+    - auth.ts           (login, token helpers)
+    - records.ts        (records API methods)
+    - users.ts
+    - budget.ts
+    - audit.ts
+  - auth/
+    - AuthProvider.tsx  (context for token and user info)
+    - useAuth.ts
+    - token.ts          (token storage and decode helpers)
+  - components/
+    - ProtectedRoute.tsx
+    - Layout.tsx
+    - Navbar.tsx
+    - SummaryWidgets/
+    - RecordForm.tsx
+    - UserForm.tsx
+    - BudgetForm.tsx
+    - AuditTable.tsx
+  - pages/
+    - LoginPage.tsx
+    - DashboardPage.tsx
+    - RecordsPage.tsx
+    - UsersPage.tsx
+    - BudgetPage.tsx
+    - AuditPage.tsx
+  - types/
+    - index.ts (FinancialRecordDTO, FinancialRecordResponse, UserDTO, UserResponse, PaginatedResponse<T>, ApiResponse<T>)
+  - utils/
+    - date.ts
+    - charts.ts
+
+Implementation details & best practices
+- Axios client (`src/api/client.ts`):
+  - Base URL from `import.meta.env.VITE_API_BASE_URL` (fallback to http://localhost:8081)
+  - Request interceptor: attach Authorization header if token present
+  - Response interceptor: unwrap ApiResponse; if ApiResponse.status !== 'success' throw an error with message; if HTTP 401 -> invoke logout
+- Token handling:
+  - localStorage key: `token`
+  - jwt decode helper: parse middle segment and JSON.parse(base64)
+  - provide `getCurrentUser()` returning { username, roles, exp }
+- Forms & validation:
+  - Use React Hook Form + Zod with typed schema for FinancialRecord and User forms.
+- Error handling:
+  - Centralized error boundary and Snackbar system. If API returns ApiResponse.error display message.
+- Types:
+  - Keep TypeScript strict, define ApiResponse<T> type and use throughout.
+
+Dev & run
+- Create project (recommended): Vite + React + TypeScript
+  ```bash
+  npm create vite@latest frontend -- --template react-ts
+  cd frontend
+  npm install
+  npm install axios zod react-hook-form @hookform/resolvers jwt-decode @mui/material @mui/icons-material @emotion/react @emotion/styled react-router-dom
+  ```
+- Env (.env.local):
+  ```env
+  VITE_API_BASE_URL=http://localhost:8081
+  ```
+- Start dev server
+  ```bash
+  npm run dev
+  ```
+
+Testing & QA guidance
+- Manually test flows:
+  - Login as seeded users: admin1/admin123, analyst1/analyst123, viewer1/viewer123 (these are seeded in backend DataInitializer)
+  - Verify role-based UI hiding: viewer cannot see create buttons
+  - Create cashflow records and ensure budget status updates
+  - Confirm audit entries appear after login and user creation
+
+README requirements (what the generated frontend should include)
+- Project overview and tech stack
+- Environment variables and how to set them
+- Start commands (install, dev, build)
+- Sample API flow: how to login, where token is stored, example requests
+- Notes about CORS/local dev: backend must be running on http://localhost:8081
+
+Deliverable (what you should output)
+- A complete `frontend` project scaffold (files & folder structure above) — or a high-quality copilot prompt that will generate the project when used with GitHub Copilot or a frontend generator. The prompt must be copy-paste ready, concise, and technically exact to match the backend.
+
+Important constraints
+- Do NOT call or assume any non-existent backend endpoints beyond those listed (login, summary, records, users, budget, audit).
+- Do not store password anywhere on client except sending to the login endpoint.
+- Keep UI/UX professional and minimal; focus on functionality and API correctness.
+
+Optional extras (nice to have but not mandatory)
+- Charts for monthly income/expense (use a chart library like Recharts or Chart.js) but only if API for recent transactions is used.
+- Local caching for paginated lists (stale-while-revalidate) using react-query (optional)
+
+End of prompt — use this file as `frontend-copilot-prompt.txt` for Copilot or any frontend generator. Be explicit and exact; the frontend must integrate with an existing backend running at http://localhost:8081.
